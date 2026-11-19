@@ -1,469 +1,388 @@
 # HLD
 
-## Scalability
-
-- Scalability is the ability to take more work by adding resources, without a rewrite.
-- Vertical scale is a bigger machine. It is simple and it ends.
-- Horizontal scale is more machines. The application must not keep the only copy of a session in local memory, or the next request may hit a machine that does not know the user.
-- Stateless HTTP plus a shared database and Redis is how you add API machines.
-- The database is usually the limit long before Node is.
-- Vertical is a bigger pot. Horizontal is more pots. The soup has to be the kind you can split.
-- careful: Putting sessions in a process-local Map and then adding a second process.
-- What would you scale first on VMS?
-- I would measure. If CPU on Node is hot and the SQL is fine, I add API processes behind nginx. If the SQL is hot, more Node makes it worse. I say the measurement before the drawing.
-
-```
-browser -> nginx -> any API process -> Postgres and Redis
-```
-
-- homework
-```
-browser -> nginx -> any API process -> Postgres and Redis
-```
-
-## Load balancing
-
-- A load balancer spreads requests across healthy servers.
-- Round robin is even. Least connections is better when some requests are slow.
-- A health check removes a process that is not answering.
-- Sticky sessions pin a user to one machine. They hide a state bug. Prefer a shared store.
-- nginx in front of PM2 is this, on one machine or several.
-- The balancer is a host at a restaurant who seats parties at tables that are actually staffed.
-- careful: A health check that always returns 200.
-- What is a health check?
-- A request, often GET /health, that answers only when the process can also reach Postgres. A process that says 200 while the database is down should not receive traffic.
-
-```
-nginx upstream { server 127.0.0.1:3000; server 127.0.0.1:3001; }
-```
-
-- homework
-```
-nginx upstream { server 127.0.0.1:3000; server 127.0.0.1:3001; }
-```
-
-## Caching
-
-- A cache holds a copy close to the reader. The hard part is knowing when the copy is a lie.
-- Browser cache, CDN, Redis, and the database's own buffers are four different caches.
-- Cache a read that is expensive and allowed to be a few seconds old.
-- Invalidate on write, or set a short TTL.
-- Do not cache a personal authorisation decision for minutes.
-- A cache is a note on the fridge. When the shopping changes, throw the note away.
-- careful: A cache with no expiry and no delete.
-- Cache aside or write through?
-- Cache aside: the application fills the cache on a miss. Write through: every write updates the cache too. I use cache aside with a delete on write, so I cannot forget to update a field.
-
-```
-key: port-call:42  ttl: 15 seconds  delete the key on PATCH
-```
-
-- homework
-```
-key: port-call:42  ttl: 15 seconds  delete the key on PATCH
-```
-
-## CDN
-
-- A CDN stores static bytes in many cities so the user is not fetching a logo from another continent.
-- HTML that is personal should not be cached as public.
-- Hashed file names, app.a1b2.js, can be cached for a year because the name changes when the file changes.
-- Video segments for HLS are a natural CDN fit.
-- A CDN does not run your SQL.
-- A CDN is copies of the poster in many towns. The ticket office, your API, is still one place.
-- careful: Caching a logged-in HTML page on a shared CDN.
-- Why is the old JavaScript still showing?
-- The HTML was cached and still points at the old hashed file, or the HTML was not hashed and the browser kept it. I set HTML to revalidate and assets to immutable.
-
-```http
-app.a1b2.js  Cache-Control: public, max-age=31536000, immutable
-index.html   Cache-Control: no-cache
-```
-
-- homework
-```http
-app.a1b2.js  Cache-Control: public, max-age=31536000, immutable
-index.html   Cache-Control: no-cache
-```
-
-## Database sharding
-
-- Sharding splits rows across database servers. You do it when one server cannot hold the writes.
-- Choose a key that matches the query. Tournament id keeps one event together.
-- Cross-shard queries become application code.
-- Transactions across shards are a project, not a setting.
-- Partitioning on one machine comes first.
-- Several ledgers, and a rule for which ledger holds which customer. A question that does not name the customer opens every ledger.
-- careful: Sharding by a key you do not have in the WHERE.
-- Have you sharded production?
-- No. I know the cost. I would partition by time and read replicas before I split the write path. I will not draw ten shards for a traffic number I have not measured.
-
-```
-one tournament, one shard
-a user in many tournaments means a query per shard or a directory
-```
-
-- homework
-```
-one tournament, one shard
-a user in many tournaments means a query per shard or a directory
-```
-
-## Replication
-
-- A replica is a copy that follows the primary. It is for reads and for failover, not for fixing a bad write.
-- Writes go to the primary. The primary ships the log.
-- Reads can go to replicas if you tolerate lag.
-- Promotion makes a replica the new primary. You must be sure the old primary cannot still accept writes. That is fencing.
-- A replica copies mistakes too.
-- A replica is an apprentice copying the ledger. If you write in both books, you have two truths.
-- careful: Failover you have never rehearsed, described as if it were a button.
-- What is split brain?
-- Two nodes both believe they are the primary. They accept different writes. Fencing, a lock the old primary cannot renew, stops the old one.
-
-```
-writes -> primary -> WAL -> replica -> reads
-```
-
-- homework
-```
-writes -> primary -> WAL -> replica -> reads
-```
-
-## Consistent hashing
-
-- Consistent hashing puts keys on a ring so adding a server moves only a fraction of the keys.
-- Hash the key onto a circle. The server is the next mark clockwise.
-- With ordinary modulo, adding a server remaps almost every key.
-- Virtual nodes, many marks per server, keep the balance when servers differ in size.
-- This is how caches and some shard maps avoid a total reshuffle.
-- It is a clock. Each key sits at a minute. The next server mark owns it. Adding a mark takes only the minutes just behind it.
-- careful: Forgetting virtual nodes and then one server owns half the ring.
-- Why not hash % N?
-- When N changes, almost every key changes bucket. Caches go cold at once. The ring moves only the keys that lived on the arc you handed to the new server.
-
-```
-ring position = hash(key)
-server = next node clockwise
-```
-
-- homework
-```
-ring position = hash(key)
-server = next node clockwise
-```
-
-## CAP theorem
-
-- During a partition, when nodes cannot talk, you choose availability or consistency. You do not get both.
-- C is every read seeing the latest write. A is every request getting a response. P is a cut in the network, which will happen.
-- CP: refuse the write or the read rather than disagree. A bank balance leans this way.
-- AP: answer anyway, and repair later. A hit counter can.
-- When the network is healthy, you can have both. CAP is about the failure.
-- CAP is the promise you break when the phone line is cut. You either stop speaking or you risk saying different things.
-- careful: Saying we are CA. A real network partitions.
-- Which one is laytime?
-- The money number is CP in spirit. I would rather show an error than two different demurrage figures. A view counter on Anemi could be AP.
-
-```
-partition: the replica cannot hear the primary
-CP: tell the client to wait
-AP: serve the stale page
-```
-
-- homework
-```
-partition: the replica cannot hear the primary
-CP: tell the client to wait
-AP: serve the stale page
-```
-
-## PACELC
-
-- PACELC adds the other half. If there is a partition, choose A or C. Else, even when healthy, choose latency or consistency.
-- The E is 'else'. In normal operation a replica read is faster and slightly stale. That is latency over consistency.
-- Waiting for every replica to confirm a write is consistency over latency.
-- CAP talks about a partition. PACELC also asks what you do on a normal day, when the network is fine.
-- Postgres synchronous commit waits for the standby. Asynchronous commit returns sooner and can lose the last transactions if the primary dies.
-- CAP is the storm. PACELC also asks how you behave in good weather.
-- careful: Reciting CAP and having nothing to say about replica lag on a normal day.
-- How does this change a Postgres choice?
-- Asynchronous replication is PA/EL in the loose telling: on a partition you may serve stale reads, and even when healthy you chose latency. Synchronous commit spends latency to know the standby has the write.
-
-```
-async replica: lower latency, a chance of lag
-sync replica: higher latency, the standby has the commit
-```
-
-- homework
-```
-async replica: lower latency, a chance of lag
-sync replica: higher latency, the standby has the commit
-```
-
-## Consistency models
-
-- A consistency model is the promise about what a read returns after a write.
-- Strong: the read sees the latest committed write. A primary read in Postgres.
-- Eventual: if writes stop, replicas will agree. They may disagree now.
-- Read-your-writes: this user sees their own update, even if others still see the old value.
-- Name the one you need. A payment is strong. A view count can be eventual.
-- Strong is one clock on the wall. Eventual is several clocks that drift and then catch up.
-- careful: Saying eventual for a bank transfer because it 'scales'.
-- What do you pick for a watch-together playhead?
-- The room should see one order of events. That is closer to a single server or a log than to eventual replicas. A one-second disagreement in a playhead is a visible bug.
-
-```
-user saves a bracket
-the next GET for that user hits the primary
-other readers may hit a replica a second later
-```
-
-- homework
-```
-user saves a bracket
-the next GET for that user hits the primary
-other readers may hit a replica a second later
-```
-
-## Kafka and pub/sub
-
-- Pub/sub is a publisher who does not know the subscribers. Kafka is a durable log that many groups can read.
-- A topic is a named stream. A partition is an ordered slice of that topic.
-- A consumer group splits the partitions. Two consumers in one group do not both get the same message.
-- The log is kept, so a new consumer can replay.
-- BullMQ is a job queue, not a replayable log. I say the difference. I do not call Redis a Kafka.
-- A queue is a ticket destroyed when the meal is served. A log is a tape. Many people can listen, and you can rewind.
-- careful: Using Kafka words for BullMQ. Know which one you operate.
-- Queue or log?
-- A queue deletes the job after one worker succeeds. A log keeps the event so a second service can read it later. Laytime today is a queue. An event other teams must replay would be a log.
-
-```
-topic laytime.calculated
-group billing reads it
-group notifications reads the same events
-```
-
-- homework
-```
-topic laytime.calculated
-group billing reads it
-group notifications reads the same events
-```
-
-## Event-driven architecture
-
-- Services react to facts instead of calling each other for every step.
-- The fact is past tense: PaymentReceived, LaytimeCalculated.
-- The publisher does not know who cares.
-- You need idempotent consumers, because delivery repeats.
-- A chain of events is harder to debug. You need a correlation id in the log.
-- An event is a notice on a board. A call is tapping someone on the shoulder and waiting.
-- careful: Emitting an event and also depending on a secret order of listeners.
-- When is a direct call better?
-- When the user is waiting for the answer, such as 'is this login valid?'. Events are for work that can finish after the response, or for telling another system.
-
-```
-API commits the row
-emits LaytimeCalculated { portCallId, correlationId }
-worker and the socket gateway both hear it
-```
-
-- homework
-```
-API commits the row
-emits LaytimeCalculated { portCallId, correlationId }
-worker and the socket gateway both hear it
-```
-
-## Microservices
-
-- A microservice is a separately deployed programme with its own data.
-- Split on a business boundary you can name, not on a technical layer.
-- Each service owns its tables. Another service does not reach into them.
-- The cost is network, partial failure, and deployment. A modular monolith avoids that until the teams or the scale demand a split.
-- VMS as modules inside one Nest API is a modular monolith. I will call it that.
-- Microservices are separate shops. A modular monolith is one shop with labelled rooms. Do not build the mall first.
-- careful: A 'microservice' that shares a database and calls five others for one click.
-- Why not start with ten services?
-- I would have ten deploys, ten failures, and no team to own them. Modules inside one process give me boundaries I can split later if a module has its own life.
-
-```
-one deployable API
-modules: identity, port calls, laytime, billing
-no shared tables across a future split
-```
-
-- homework
-```
-one deployable API
-modules: identity, port calls, laytime, billing
-no shared tables across a future split
-```
-
-## API gateway
-
-- A gateway is the front door for clients. It routes, authenticates, and limits, and the services stay private.
-- nginx already does routing and TLS for us.
-- A gateway can check the JWT once and pass the user id inward.
-- It should not contain laytime. Business rules behind the door rot when they live in the door.
-- One public URL is easier for the Expo app than five origins.
-- The gateway is the reception desk. It checks the appointment. It does not perform the surgery.
-- careful: Two places that both think they own authorisation, and they disagree.
-- What must not live in the gateway?
-- The business rule and the database query. The gateway may reject a missing token. It should not decide demurrage.
-
-```
-app.example -> nginx -> web
-app.example/api -> nginx -> nest
-```
-
-- homework
-```
-app.example -> nginx -> web
-app.example/api -> nginx -> nest
-```
-
-## Rate limiter design
-
-- A distributed rate limiter is a shared counter, because each API machine must see the same count.
-- The key is IP or user, plus the route.
-- Redis INCR is the shared counter. A limit inside one Node process is wrong once you have two processes.
-- Token bucket: tokens refill over time, and a burst is allowed until the bucket is empty.
-- Return 429. Log the key, not the password they were guessing.
-- One tally board for every door, not a private tally in each guard's pocket.
-- careful: An in-memory counter behind a load balancer.
-- Fixed window or token bucket?
-- Fixed window is what I would write first, and I can explain the burst at the boundary: 10 at the end of a minute and 10 at the start of the next. A token bucket smooths that. I name the weakness of the thing I shipped.
-
-```
-key login:ip
-INCR
-EXPIRE 60 on first hit
-reject after 10
-```
-
-- homework
-```
-key login:ip
-INCR
-EXPIRE 60 on first hit
-reject after 10
-```
-
-## Bloom filter
-
-- A Bloom filter answers 'definitely not' or 'maybe' using a few bits. It never says 'definitely yes'.
-- You hash the key several times and set those bits.
-- If any bit is unset, the key was never added.
-- If all bits are set, it might be a collision. You check the real store.
-- It saves a database hit for things that are usually absent, such as 'have we seen this email'. You cannot delete easily from the basic version.
-- A Bloom filter is a rumour mill that is allowed to say maybe, and is never allowed to forget someone who did arrive.
-- careful: Treating a positive as proof.
-- Can it tell me a user exists?
-- It can tell me a user definitely does not. A 'yes' must be confirmed. I would not use it as the source of a login.
-
-```
-maybe in the filter? if no, skip the database
-if yes, confirm in Postgres
-```
-
-- homework
-```
-maybe in the filter? if no, skip the database
-if yes, confirm in Postgres
-```
-
-## Circuit breaker
-
-- A circuit breaker stops calling a dependency that is already failing, so you do not pile timeouts on top of an outage.
-- Closed: calls go through. Failures are counted.
-- Open: calls fail immediately for a cool-off. The user gets a fast error.
-- Half-open: one trial call. Success closes the breaker. Failure opens it again.
-- Use it around Stripe or a remote encode service, not around your own pure function.
-- It is a fuse. When the line is shorting, the fuse opens so the house does not burn. Later you test the line once.
-- careful: Retrying forever with no backoff and no breaker.
-- How is this different from a retry?
-- A retry keeps hitting a sick service. A breaker stops hitting it, then tries once. I retry a timeout once. I open the breaker when the timeouts become the traffic.
-
-```
-5 failures in 10 seconds -> open for 30 seconds -> one trial
-```
-
-- homework
-```
-5 failures in 10 seconds -> open for 30 seconds -> one trial
-```
-
-## Saga pattern
-
-- A saga is a long business action across several services, made of local transactions and compensations.
-- There is no distributed lock that lasts for a human clicking through checkout.
-- Each step commits locally. If a later step fails, you run a compensating action, such as a refund or a release of a seat.
-- Orchestration is one conductor calling the steps. Choreography is events.
-- Compensations must be idempotent too. A refund twice is its own bug.
-- A saga is a trip with a plan for walking back each leg if a later leg is cancelled. It is not a time machine.
-- careful: Holding a database transaction open while Stripe thinks.
-- Is a Prisma transaction a saga?
-- No. A database transaction is one ACID bracket. A saga is what you need when the steps are not in one database, such as our row plus Stripe. I do not wrap the Stripe HTTP call inside a database transaction.
-
-```
-take entry -> charge Stripe -> if charge fails, release the entry
-```
-
-- homework
-```
-take entry -> charge Stripe -> if charge fails, release the entry
-```
-
-## Blob storage
-
-- Blob storage holds large bytes, videos and PDFs, outside the database.
-- The database stores the key, the size, the type, and the owner.
-- The object store stores the bytes.
-- Access is a signed URL that expires, not a public bucket of private videos.
-- Backups of the database do not include the blobs unless you copy those too.
-- The database is the catalogue card. The warehouse holds the film can.
-- careful: A public bucket for a private watch party.
-- Why not a bytea column?
-- A film does not belong in a row. Backups, replicas, and queries all carry it. The row should point at the object.
-
-```
-videos.key, videos.owner_id in Postgres
-bytes in object storage
-```
-
-- homework
-```
-videos.key, videos.owner_id in Postgres
-bytes in object storage
-```
-
-## Back-of-envelope estimation
-
-- Estimation is arithmetic you can do on a board to see if a design is sane.
-- Write the assumptions. Daily users, requests per user, size of a row.
-- Turn them into per second. Divide by 100,000 for a rough peak if you do not have a better peak factor. Say the factor.
-- Storage is rows times size times days, plus replication.
-- The point is the unit, not a fake precise number.
-- It is a napkin that shows you need a lorry or a pocket. It is not a quote.
-- careful: A precise-looking number with no assumption beside it.
-- How much storage for a year of port-call facts?
-- I state the row size, say 200 bytes, and the count, say 1,000 facts a day. That is 200 KB a day, about 70 MB a year, before indexes and replicas. The number can be wrong. The method should not be.
-
-```
-50 tournaments a day
-2000 reads each
-100,000 reads a day
-about 2 reads a second on average
-a peak of 20 per second is still one Postgres
-```
-
-- homework
-```
-50 tournaments a day
-2000 reads each
-100,000 reads a day
-about 2 reads a second on average
-a peak of 20 per second is still one Postgres
+## chapter 1 Scalability
+
+- scalability = the system still answers when there is more traffic or more data
+- vertical = a bigger machine. more CPU, more RAM. simple, and it has a ceiling
+- horizontal = more machines. the work has to be shareable
+- a stateless API scales horizontally. the session is in the token or in Redis, not in the process memory
+- a single Postgres does not scale by copying the process. writes have a primary
+- we scale the thing that is actually busy. a CPU chart, a pool chart, a disk chart
+- VMS, Anemi, and Bracket run as a small number of processes behind nginx. that is the real shape. the rest of this file is how the shape grows
+
+```text
+one Node process, CPU at 90 percent
+-> a second process, nginx splits the requests
+the database is still one primary
+```
+
+- more API processes do not make one hot row faster. that row is a Postgres problem
+- a video file is bandwidth. more Node processes do not fix a missing cache in front of the bytes
+
+- homework of chapter 1
+```text
+// 1a  vertical or horizontal: a second API container
+// 1b  why that second container does not speed up one locked row
+// 1c  where a JWT session lives, so either container can serve the next call
+```
+
+## chapter 2 Load balancing
+
+- a load balancer spreads requests across healthy processes
+- nginx is the one in front of our APIs
+- round robin = take turns
+- least connections = send to the one with fewer open requests
+- a health check removes a process that stopped answering
+- sticky sessions pin a user to one process. we avoid that by keeping state out of the process
+- layer 4 balances TCP connections. layer 7 can look at the path and the host
+- the balancer is not a backup of the data
+
+```nginx
+upstream api {
+  server 127.0.0.1:3000;
+  server 127.0.0.1:3001;
+}
+server {
+  location /api/ {
+    proxy_pass http://api;
+  }
+}
+```
+
+- two upstreams, one URL. the client does not pick the process
+- a WebSocket is a long connection. the balancer must allow the upgrade and should not kill idle sockets too fast
+- if both upstreams die, the client sees 502. the balancer has nobody to call
+
+- homework of chapter 2
+```text
+// 2a  round robin versus least connections
+// 2b  why we do not need a sticky cookie when the login is a JWT
+// 2c  what the client sees when every upstream fails
+```
+
+## chapter 3 Caching and CDN
+
+- a cache = a copy closer to the reader, so we do not recompute or refetch
+- the key must include everything that changes the value
+- when the row changes, delete the key or give the key a short TTL
+- Redis is the cache and the queue store on VMS and Bracket. Anemi does not use Redis
+- a CDN = a cache at the edge of the network, for bytes that many people read
+- HLS segments and images are CDN material. a private laytime number is not
+- cache aside = the app looks in the cache, and on a miss reads the database and fills the cache
+- a stampede = many misses at once all hit the database. a short lock or a stale value reduces that
+
+```ts
+async function vesselName(id: string): Promise<string> {
+  const key = `vessel-name:${id}`;
+  const hit = await redis.get(key);
+  if (hit) return hit;
+  const row = await db.vessel.findUniqueOrThrow({ where: { id } });
+  await redis.set(key, row.name, "EX", 60);
+  return row.name;
+}
+```
+
+- TTL 60 means a rename can be a minute late. if that is too late, delete the key in the update route
+- do not cache "may this user edit" for a long TTL. a role change would be late
+- the CDN caches by URL. a private URL with the token in the query string can leak via logs. put auth where the CDN is told not to cache
+
+- homework of chapter 3
+```ts
+// 3a  the key for port call pc_12's vessel name
+// 3b  what we do in the PATCH that renames the vessel
+// 3c  a public HLS segment versus a demurrage figure. which one may sit on a CDN
+```
+
+## chapter 4 Sharding, replication, and consistent hashing
+
+- replication = a copy. the primary writes. replicas replay. chapter material from the database notes, seen here as a design choice
+- a replica helps reads and helps us survive a dead primary. it copies a bad DELETE too
+- sharding = different rows on different servers, split by a key
+- we have not sharded these products. one Postgres is the design until a measurement says it is not enough
+- a shard key we always have keeps one tournament's matches together
+- a query without the key hits every shard
+- consistent hashing = the ring. a key goes to the next server clockwise
+- when one server is added, only the keys that walked onto it move. the other keys stay
+- virtual nodes keep one physical server from owning a huge arc of the ring
+- this is how some caches avoid a total reshuffle. it is also a shard map
+
+```text
+ring: server A, server B, server C
+key "t_9" hashes between A and B, so B stores it
+add server D between A and B
+"t_9" may move to D. keys on the other arcs stay
+```
+
+- replication and sharding solve different problems. a replica is the same rows. a shard is a subset of the rows
+- do the replica first. shard when one primary's disk or write rate is the wall
+
+- homework of chapter 4
+```text
+// 4a  replica or shard: the report can be a second behind
+// 4b  replica or shard: the table no longer fits one disk
+// 4c  what moves when we add a server on a consistent-hash ring
+// 4d  a query "all matches for this user" if we sharded by tournament. what is the cost
+```
+
+## chapter 5 CAP, PACELC, and consistency models
+
+- CAP = during a partition, we choose availability or consistency. we do not get a magical third
+- partition = the network cut. some nodes cannot talk
+- consistency here means every read sees the latest write
+- availability means every request gets a response, even if it is stale
+- CP = refuse to answer rather than answer with a stale or split brain. a money figure wants this
+- AP = answer with a possibly old value. a view counter can live with it
+- CA is not a real choice on a network that can cut
+- PACELC adds the healthy day. if there is a partition, A or C. else, latency or consistency
+- a synchronous replica waits. that is consistency over latency
+- an asynchronous replica returns sooner. that is latency, and a chance of lag
+- strong consistency = a read sees the latest committed write
+- eventual consistency = if writes stop, copies catch up
+- read-your-writes = this user sees their own write, even if other users can be a moment behind
+
+```text
+laytime money: rather fail the read than show two different figures
+Anemi view counter: an old count for a second is acceptable
+```
+
+- Postgres synchronous commit waits for the standby. asynchronous commit can lose the last transactions if the primary dies before the replica gets them
+- we pick per feature. one database can be the source of truth while a cache is eventual
+
+- homework of chapter 5
+```text
+// 5a  CP or AP for the demurrage number
+// 5b  CP or AP for a play count
+// 5c  what the E in PACELC is asking on a normal day
+// 5d  read-your-writes in one sentence
+```
+
+## chapter 6 Kafka, pub/sub, and events
+
+- an event = a fact that already happened. LaytimeCalculated. PlaybackMoved. PaymentReceived
+- the producer does not call the consumer. it publishes the fact
+- pub/sub = many subscribers can hear one fact
+- a queue usually gives a job to one worker. pub/sub gives a copy to each subscriber
+- Kafka is a log of events, kept in order inside a partition
+- consumers track an offset. they can replay
+- we have not operated Kafka. BullMQ is the queue we have run. Socket.IO is the push to browsers
+- a domain event inside one service can be a function call. an event that crosses a process is a message
+
+```ts
+type LaytimeCalculated = {
+  type: "LaytimeCalculated";
+  portCallId: string;
+  demurrage: number;
+  at: string;
+};
+```
+
+- the name is past tense because it happened
+- the payload has the id and the number. a consumer that needs more loads it from Postgres
+- at-least-once delivery means the consumer must be idempotent. the same event can arrive twice
+- ordering inside one partition is a Kafka promise. ordering across the whole system is not
+
+- homework of chapter 6
+```ts
+// 6a  queue or pub/sub: one worker should recalculate laytime
+// 6b  queue or pub/sub: every open screen should hear the new total
+// 6c  why the consumer still checks "have I stored this event id"
+// 6d  name the tool we have actually run for jobs, and the tool we have not
+```
+
+## chapter 7 Microservices and an API gateway
+
+- a microservice = a process that owns one area and its data
+- a modular monolith = one process, many modules, one database. Nest modules are this
+- we split a service out when a module has its own scaling need or its own release cycle
+- splitting first, without that reason, adds network failures and distributed transactions
+- each service owns its tables. another service asks through an API or an event. it does not read the tables
+- an API gateway = one front door. it routes, authenticates, and limits. nginx is that door for us
+- the gateway is not where the laytime rule lives. the rule stays in the service
+
+```text
+browser -> nginx -> nest process
+                 -> the same process, module port-calls, module auth
+```
+
+```text
+later, only if a measurement says so
+browser -> gateway -> auth service
+                   -> laytime service
+```
+
+- a shared database between two "services" is still one system with two doors
+- the failure mode of a split is a timeout. the caller needs a limit and a behavior when the other service is down
+
+- homework of chapter 7
+```text
+// 7a  what we run today, a modular monolith or a fleet of services
+// 7b  a reason that would justify a split
+// 7c  why the gateway does not compute demurrage
+```
+
+## chapter 8 Rate limiter design
+
+- a rate limiter protects a route from a burst
+- fixed window = N hits per 60 seconds, counted from a clock bucket. the edge of two buckets can allow almost 2N
+- sliding window = the count looks back over the last 60 seconds. fairer, a bit more bookkeeping
+- token bucket = tokens drip in. a request spends one. a burst is allowed up to the bucket size
+- the counter lives in Redis so every API process sees it
+- the key is who we are limiting. an IP for login. a user id for a write. a route name is part of the key
+- 429 is the response. a Retry-After header tells a polite client when to try
+- this is the design picture. the small version we ship is INCR and EXPIRE
+
+```ts
+const key = `limit:${userId}:port-calls`;
+const hits = await redis.incr(key);
+if (hits === 1) await redis.expire(key, 60);
+if (hits > 30) throw new HttpException("Too many requests", 429);
+```
+
+- login is stricter than a normal read. 10 per minute on login. a higher number on a list route
+- do not use only the IP when many users share a NAT. a bad limit locks a whole office
+- the limiter is not authentication. a valid user can still be limited
+
+- homework of chapter 8
+```ts
+// 8a  fixed window's weakness at the boundary
+// 8b  the Redis key for user u_3 writing port calls
+// 8c  why the limit store is Redis and not a variable in the Node process
+```
+
+## chapter 9 Bloom filters and circuit breakers
+
+- a bloom filter = a small bit array that says "definitely not" or "maybe"
+- it can say maybe for an item that was never added. it must not say no for an item that was added
+- we use it to skip a disk lookup. a "maybe" still checks the database
+- a password-breach list or "have we seen this id" can be a bloom filter. a wrong "maybe" only costs a lookup
+- a circuit breaker = stop calling a dependency that is failing
+- closed = calls go through
+- open = calls fail fast, without waiting for the timeout
+- half-open = let a few calls through to see if it recovered
+- we count failures. past a threshold, we open. after a cool-down, we try again
+- our HTTP client to Stripe or to a webhook target is the place this fits. we have the idea. a library implements the states
+
+```text
+bits: a hash of the key sets 3 bits
+lookup: if any of the 3 bits is 0, the key was never added
+if all 3 are 1, check the real store
+```
+
+```text
+5 timeouts in a row -> open for 30 seconds
+then one trial call
+success -> closed
+failure -> open again
+```
+
+- a bloom filter is not a set. we cannot list what is in it, and we cannot delete one key without extra design
+- an open circuit returns an error quickly. it does not invent a successful payment
+
+- homework of chapter 9
+```text
+// 9a  the bloom filter says no. do we read Postgres
+// 9b  the bloom filter says maybe. do we read Postgres
+// 9c  what the caller gets while the circuit is open
+```
+
+## chapter 10 Sagas and blob storage
+
+- a saga = a business action that spans steps which cannot share one database transaction
+- each step has a forward action and a compensating action
+- charge the card, then reserve the seat. if the seat fails, refund
+- we do not use a saga inside one Postgres. one transaction is simpler and correct
+- a saga is for when the steps are different systems. Stripe and our database
+- the record of the saga is a row. pending, done, compensating. so a crash can resume
+- blob storage = files as objects. a key, bytes, and metadata
+- the picture's blob store is where an upload lands. S3 is the well-known product. the idea is the key and the bytes
+- the database stores the key and the owner. the blob store stores the bytes
+- a signed URL is a temporary right to PUT or GET that key
+
+```text
+1. create payment row: pending
+2. Stripe charge
+3. mark paid
+if 3 never happens, a worker looks at pending rows and asks Stripe what occurred
+```
+
+```text
+object key: videos/u_1/upload_9.mp4
+database: video id, owner, key, status
+```
+
+- compensation must be idempotent too. a retry must not refund twice
+- the object store is not the source of "who may watch". the database and the auth check are
+
+- homework of chapter 10
+```text
+// 10a  why a port call and its first fact are a transaction, not a saga
+// 10b  a saga step pair for "take payment, then confirm the team"
+// 10c  what lives in Postgres versus what lives in the object store for a video
+```
+
+## chapter 11 Back-of-envelope estimation
+
+- back of the envelope = a rough size so the design is in the right order of magnitude
+- we want powers of ten, not a fake precise number
+- useful anchors: a day has about 1e5 seconds. a million is 1e6. a request of 1 KB is 1e3 bytes
+- write the assumption, then the multiply
+
+```text
+50 requests per second average
+peak is 5 times average = 250 rps
+each request is 2 KB in and 8 KB out
+out bandwidth ~ 250 * 8 KB = 2 MB/s at peak
+a day of access logs, one line 200 bytes, 50 * 1e5 * 200 ~ 1e9 bytes ~ 1 GB
+```
+
+- 1e5 seconds/day is 100,000. a real day is 86,400. close enough for this
+- storage for video is a different sum. 500 uploads a day, 200 MB each, is 100 GB a day before we delete or transcode
+- HLS does not shrink that sum by itself. transcoding choices do. the envelope tells us to put the bytes in object storage and a cache, not through the Node process
+- if the envelope says 10 requests a second, we do not draw 40 services
+
+```text
+laytime recalculations: 1,000 port calls, each edited 20 times a day
+20,000 jobs a day
+20,000 / 1e5 seconds ~ 0.2 jobs per second
+a single worker is enough until that number grows by orders of magnitude
+```
+
+- homework of chapter 11
+```text
+// 11a  20 rps, 10 KB response. peak bandwidth at 4 times average
+// 11b  1,000 videos of 100 MB. the disk before any transcode
+// 11c  which result would change a design, and which would not
+```
+
+## chapter 12 One picture for VMS
+
+- put the chapters on the system we actually run
+- browser and phone call nginx
+- nginx talks to the Nest process
+- Nest writes Postgres in a transaction
+- Nest enqueues `laytime:` plus the port call id
+- a worker runs the pure function
+- Socket.IO tells the open screens
+- Redis holds the queue and the rate limit. it is not the port-call table
+- Sentry gets the exception. Prometheus gets the duration and the queue depth
+
+```text
+clients -> nginx -> Nest -> Postgres
+                     |        ^
+                     v        |
+                   Redis -> worker
+                     |
+                  Socket.IO -> open screens
+```
+
+- Anemi removes Redis and the worker. the live path is the socket. the file path is FFmpeg and the playlist
+- Bracket adds Stripe on the side, with the event id stored once
+- we do not draw Kafka, a shard ring, or a CDN for the money number unless the envelope says the simple picture broke
+
+- homework of chapter 12
+```text
+// 12a  redraw the VMS boxes from memory
+// 12b  cross out the boxes Anemi does not have
+// 12c  where the demurrage number is computed
+// 12d  one number we would estimate before adding a second worker
 ```

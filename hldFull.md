@@ -183,7 +183,7 @@ AP: serve the stale page
 - PACELC adds the other half. If there is a partition, choose A or C. Else, even when healthy, choose latency or consistency.
 - The E is 'else'. In normal operation a replica read is faster and slightly stale. That is latency over consistency.
 - Waiting for every replica to confirm a write is consistency over latency.
-- It stops the interview answer at 'we are CP' and asks what you do on a sunny day.
+- CAP talks about a partition. PACELC also asks what you do on a normal day, when the network is fine.
 - Postgres synchronous commit waits for the standby. Asynchronous commit returns sooner and can lose the last transactions if the primary dies.
 - CAP is the storm. PACELC also asks how you behave in good weather.
 - careful: Reciting CAP and having nothing to say about replica lag on a normal day.
